@@ -193,7 +193,7 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
             # Determine if at least some weights are positive, so a regression
             # is ok.
             reg_ok = calculate_weights(x, weights, resid_weights, xval, left_end,
-                                       right_end, radius, True)#TODO: robiter > 0) Can we do this more efficiently as before?
+                                       right_end, radius)
 
             # If ok, run the regression
             calculate_y_fit(x, y, i, xval, y_fit, weights, left_end, right_end,
@@ -292,8 +292,7 @@ cdef bool calculate_weights(np.ndarray[DTYPE_t, ndim = 1] x,
                             DTYPE_t xval,
                             Py_ssize_t left_end,
                             Py_ssize_t right_end,
-                            double radius,
-                            bool use_resid_weights):
+                            double radius):
     '''
 
     Parameters
@@ -317,11 +316,6 @@ cdef bool calculate_weights(np.ndarray[DTYPE_t, ndim = 1] x,
         The radius of the current neighborhood. The larger of
         distances between x[i] and its left-most or right-most
         neighbor.
-    use_resid_weights: bool
-        If True, multiply the x-distance weights by the residual
-        weights from the last iteration of regressions. Set to
-        False on the first iteration (since there are no residuals
-        yet) and True on the subsequent ``robustifying`` iterations.
 
 
     Returns
@@ -341,15 +335,11 @@ cdef bool calculate_weights(np.ndarray[DTYPE_t, ndim = 1] x,
 
     # Assign the distance measure to the weights, then apply the tricube
     # function to change in-place.
-    # use_resid_weights will be False on the first iteration, then True
-    # on the subsequent ones, after some residuals have been calculated.
     weights[left_end:right_end] = dist_i_j
-    if use_resid_weights == False:
-        tricube(weights[left_end:right_end])
-    if use_resid_weights == True:
-        tricube(weights[left_end:right_end])
-        weights[left_end:right_end] = (weights[left_end:right_end] *
-                                          resid_weights[left_end:right_end])
+
+    tricube(weights[left_end:right_end])
+    weights[left_end:right_end] = (weights[left_end:right_end] *
+                                      resid_weights[left_end:right_end])
 
     sum_weights = np.sum(weights[left_end:right_end])
 
