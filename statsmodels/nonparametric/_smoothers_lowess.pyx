@@ -67,6 +67,9 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
         A numpy array with two columns. The first column
         is the sorted x values and the second column the
         associated estimated y-values.
+    resid_weights: numpy array
+        A numpy array with the residual weights on the data points
+        computed from the iterations performed
 
     Notes
     -----
@@ -392,6 +395,10 @@ cdef void calculate_y_fit(np.ndarray[DTYPE_t, ndim = 1] x,
         If True, at least some points have positive weight, and the
         regression will be run. If False, the regression is skipped
         and y_fit[i] is set to equal y[i].
+    fill_with_nans: bool
+        If True, values with no valid regression will be filled with NaN
+        Otherwise, we use the original value in `y` of that point.
+        If x and xval are not the same, this must be False.
 
     Returns
     -------

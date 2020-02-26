@@ -96,8 +96,9 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, xvals=None, is_sorted=Fal
     Judicious choice of delta can cut computation time considerably
     for large data (N > 5000). A good choice is ``delta = 0.01 * range(exog)``.
 
-    Alternatively, a set of `x_i` at which to evaluate the regression can be
-    specified explicitly by providing the `xvals` parameter.
+    If `xvals` is provided, the regression is then computed at those points
+    and the fit values are returned. Otherwise, the regression is run
+    at points of `exog`.
 
     Some experimentation is likely required to find a good
     choice of `frac` and `iter` for a particular dataset.
