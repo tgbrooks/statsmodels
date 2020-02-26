@@ -10,7 +10,7 @@ Author : Josef Perktold
 import numpy as np
 from ._smoothers_lowess import lowess as _lowess
 
-def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, is_sorted=False,
+def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, xvals=None, is_sorted=False,
            missing='drop', return_sorted=True):
     '''LOWESS (Locally Weighted Scatterplot Smoothing)
 
@@ -32,10 +32,14 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, is_sorted=False,
     delta : float
         Distance within which to use linear-interpolation
         instead of weighted regression.
+    xvals: 1-D numpy array
+        Values of the exogenous variable at which to evaluate the regression.
+        If supplied, cannot use delta.
     is_sorted : bool
         If False (default), then the data will be sorted by exog before
         calculating lowess. If True, then it is assumed that the data is
-        already sorted by exog.
+        already sorted by exog. If xvals is specified, then it too must be
+        sorted if is_sorted is True.
     missing : str
         Available options are 'none', 'drop', and 'raise'. If 'none', no nan
         checking is done. If 'drop', any observations with nans are dropped.
@@ -56,6 +60,9 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, is_sorted=False,
         the associated estimated y (endog) values.
         If return_sorted is False, then only the fitted values are returned,
         and the observations will be in the same order as the input arrays.
+        If xvals is provided, then return_sorted is ignored and the returned
+        array is always one dimensional, containing the y values fitted at
+        the x values provided by xvals.
 
     Notes
     -----
@@ -88,6 +95,9 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, is_sorted=False,
 
     Judicious choice of delta can cut computation time considerably
     for large data (N > 5000). A good choice is ``delta = 0.01 * range(exog)``.
+
+    Alternatively, a set of `x_i` at which to evaluate the regression can be
+    specified explicitly by providing the `xvals` parameter.
 
     Some experimentation is likely required to find a good
     choice of `frac` and `iter` for a particular dataset.
@@ -137,6 +147,7 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, is_sorted=False,
         raise ValueError('exog and endog must have same length')
 
     if missing in ['drop', 'raise']:
+        #TODO: handle NaNs in xvals appropriately
         # Cut out missing values
         mask_valid = (np.isfinite(exog) & np.isfinite(endog))
         all_valid = np.all(mask_valid)
@@ -162,26 +173,62 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, is_sorted=False,
         x = np.array(x[sort_index])
         y = np.array(y[sort_index])
 
-    res = _lowess(y, x, frac=frac, it=it, delta=delta)
+    if xvals is None:
+        # If given no explicit x values, we use the x-values in the exog array
+        xvals = exog
+        xvalues = x
+
+        xvals_all_valid = all_valid
+        if missing == 'drop':
+            xvals_mask_valid = mask_valid
+    else:
+        if delta != 0.0:
+            raise ValueError("Cannot have non-zero 'delta' and 'xvals' values")
+
+        # With explicit xvals, we ignore 'return_sorted' and always
+        # use the order provided
+        return_sorted = False
+
+        if missing in ['drop', 'raise']:
+            xvals_mask_valid = np.isfinite(xvals)
+            xvals_all_valid = np.all(xvals_mask_valid)
+            if xvals_all_valid:
+                xvalues = xvals
+            else:
+                if missing == 'drop':
+                    xvalues = xvals[xvals_mask_valid]
+                else:
+                    raise ValueError("nan or inf found in xvals")
+
+        if not is_sorted:
+            sort_index = np.argsort(xvalues)
+            xvalues = np.array(xvalues[sort_index])
+        else:
+            xvals_all_valid = True
+            
+    res = _lowess(y, x, xvalues, frac=frac, it=it, delta=delta)
     _, yfitted = res.T
+    print(res.shape, xvalues.shape)
 
     if return_sorted:
         return res
     else:
+
         # rebuild yfitted with original indices
         # a bit messy: y might have been selected twice
         if not is_sorted:
-            yfitted_ = np.empty_like(y)
+            yfitted_ = np.empty_like(xvalues)
             yfitted_.fill(np.nan)
+            print(np.isfinite(xvals).sum(), xvals.shape, np.isfinite(xvalues).sum(), xvalues.shape)
             yfitted_[sort_index] = yfitted
             yfitted = yfitted_
         else:
             yfitted = yfitted
 
-        if not all_valid:
-            yfitted_ = np.empty_like(endog)
+        if not xvals_all_valid:
+            yfitted_ = np.empty_like(xvals)
             yfitted_.fill(np.nan)
-            yfitted_[mask_valid] = yfitted
+            yfitted_[xvals_mask_valid] = yfitted
             yfitted = yfitted_
 
         # we do not need to return exog anymore
