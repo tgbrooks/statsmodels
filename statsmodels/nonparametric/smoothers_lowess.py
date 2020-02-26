@@ -137,6 +137,9 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, xvals=None, is_sorted=Fal
     endog = np.asarray(endog, float)
     exog = np.asarray(exog, float)
 
+    # Whether xvals argument was provided
+    given_xvals = (xvals is not None)
+
     # Inputs should be vectors (1-D arrays) of the
     # same length.
     if exog.ndim != 1:
@@ -147,8 +150,6 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, xvals=None, is_sorted=Fal
         raise ValueError('exog and endog must have same length')
 
     if missing in ['drop', 'raise']:
-        #TODO: handle NaNs in xvals appropriately
-        # Cut out missing values
         mask_valid = (np.isfinite(exog) & np.isfinite(endog))
         all_valid = np.all(mask_valid)
         if all_valid:
@@ -173,7 +174,7 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, xvals=None, is_sorted=Fal
         x = np.array(x[sort_index])
         y = np.array(y[sort_index])
 
-    if xvals is None:
+    if not given_xvals:
         # If given no explicit x values, we use the x-values in the exog array
         xvals = exog
         xvalues = x
@@ -184,6 +185,7 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, xvals=None, is_sorted=Fal
     else:
         if delta != 0.0:
             raise ValueError("Cannot have non-zero 'delta' and 'xvals' values")
+            # TODO: allow this again
 
         # With explicit xvals, we ignore 'return_sorted' and always
         # use the order provided
@@ -206,9 +208,28 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, xvals=None, is_sorted=Fal
         else:
             xvals_all_valid = True
             
-    res = _lowess(y, x, xvalues, frac=frac, it=it, delta=delta)
+    if not given_xvals:
+        # Run LOWESS on the data points
+        print("Not giving xvalues")
+        res, _ = _lowess(y, x, x, np.ones_like(x),
+                        frac=frac, it=it, delta=delta, given_xvals=False)
+    else:
+        # First run LOWESS on the data points to get the weights of the data points
+        # using it-1 iterations, last iter done next
+        if it > 0:
+            print("Not giving xvalues")
+            _, weights = _lowess(y, x, x, np.ones_like(x),
+                                frac=frac, it=it-1, delta=delta, given_xvals=False)
+        else:
+            weights = numpy.ones_like(x)
+
+        # Then run once more using those supplied weights at the points provided by xvals
+        # No extra iterations are performed here since weights are fixed
+        print("giving xvalues")
+        res, _ = _lowess(y, x, xvalues, weights,
+                        frac=frac, it=0, delta=delta, given_xvals=True)
+
     _, yfitted = res.T
-    print(res.shape, xvalues.shape)
 
     if return_sorted:
         return res
@@ -219,7 +240,6 @@ def lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0, xvals=None, is_sorted=Fal
         if not is_sorted:
             yfitted_ = np.empty_like(xvalues)
             yfitted_.fill(np.nan)
-            print(np.isfinite(xvals).sum(), xvals.shape, np.isfinite(xvalues).sum(), xvalues.shape)
             yfitted_[sort_index] = yfitted
             yfitted = yfitted_
         else:

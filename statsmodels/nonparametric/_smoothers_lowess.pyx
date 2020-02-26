@@ -24,13 +24,16 @@ cdef inline double fmax(double x, double y): return x if x >= y else y
 
 DTYPE = np.double
 ctypedef np.double_t DTYPE_t
+cdef double NAN = float("NaN")
 
 def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
            np.ndarray[DTYPE_t, ndim = 1] exog,
            np.ndarray[DTYPE_t, ndim = 1] xvals,
+           np.ndarray[DTYPE_t, ndim = 1] resid_weights,
            double frac = 2.0 / 3.0,
            Py_ssize_t it = 3,
-           double delta = 0.0):
+           double delta = 0.0,
+           bool given_xvals = False):
     '''lowess(endog, exog, frac=2.0/3.0, it=3, delta=0.0)
     LOWESS (Locally Weighted Scatterplot Smoothing)
 
@@ -43,6 +46,8 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
         The y-values of the observed points
     exog : 1-D numpy array
         The x-values of the observed points. exog has to be increasing.
+    weights : 1-D numpy array
+        The weightings of the observed points
     frac : float
         Between 0 and 1. The fraction of the data used
         when estimating each y-value.
@@ -52,6 +57,9 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
     delta : float
         Distance within which to use linear-interpolation
         instead of weighted regression.
+    given_xvals : bool
+        Whether xvals was provided as a an argument or whether
+        we are just using xvals = exog
 
     Returns
     -------
@@ -135,11 +143,11 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
         np.ndarray[DTYPE_t, ndim = 1] x, y
         np.ndarray[DTYPE_t, ndim = 1] y_fit
         np.ndarray[DTYPE_t, ndim = 1] weights
-        np.ndarray[DTYPE_t, ndim = 1] resid_weights
         DTYPE_t xval
 
     y = endog   # now just alias
     x = exog
+
 
     if not 0 <= frac <= 1:
            raise ValueError("Lowess `frac` must be in the range [0,1]!")
@@ -159,7 +167,6 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
         k = n
 
     y_fit = np.zeros(out_n, dtype = DTYPE)
-    resid_weights = np.zeros(n, dtype = DTYPE)
 
     it += 1 # Add one to it for initial run.
     for robiter in xrange(it):
@@ -168,7 +175,6 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
         left_end = 0
         right_end = k
         y_fit = np.zeros(out_n, dtype = DTYPE)
-        print("y_fit", y_fit.shape)
 
         # 'do' Fit y[i]'s 'until' the end of the regression
         while True:
@@ -187,11 +193,11 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
             # Determine if at least some weights are positive, so a regression
             # is ok.
             reg_ok = calculate_weights(x, weights, resid_weights, xval, left_end,
-                                       right_end, radius, robiter > 0)
+                                       right_end, radius, True)#TODO: robiter > 0) Can we do this more efficiently as before?
 
             # If ok, run the regression
             calculate_y_fit(x, y, i, xval, y_fit, weights, left_end, right_end,
-                            reg_ok)
+                            reg_ok, fill_with_nans=given_xvals)
 
             # If we skipped some points (because of how delta was set), go back
             # and fit them by linear interpolation.
@@ -205,11 +211,11 @@ def lowess(np.ndarray[DTYPE_t, ndim = 1] endog,
             if last_fit_i >= out_n-1:
                 break
 
-        # Calculate residual weights, but do not bother on the last iteration.
-        if robiter < it - 1:
+        # Calculate residual weights
+        if not given_xvals:
             resid_weights = calculate_residual_weights(y, y_fit)
 
-    return np.array([xvals, y_fit]).T
+    return (np.array([xvals, y_fit]).T, resid_weights)
 
 
 def update_neighborhood(np.ndarray[DTYPE_t, ndim = 1] x,
@@ -366,7 +372,8 @@ cdef void calculate_y_fit(np.ndarray[DTYPE_t, ndim = 1] x,
                           np.ndarray[DTYPE_t, ndim = 1] weights,
                           Py_ssize_t left_end,
                           Py_ssize_t right_end,
-                          bool reg_ok):
+                          bool reg_ok,
+                          bool fill_with_nans = False):
     '''
     Calculate smoothed/fitted y-value by weighted regression.
 
@@ -412,7 +419,13 @@ cdef void calculate_y_fit(np.ndarray[DTYPE_t, ndim = 1] x,
        double sum_weighted_x = 0, weighted_sqdev_x = 0, p_i_j
 
     if reg_ok == False:
-        y_fit[i] = y[i]
+        if fill_with_nans:
+            # Fill a bad regression (weights all zeros) with nans
+            y_fit[i] = NAN
+        else:
+            # Fill a bad regression with the original value
+            # only possible when not using xvals distinct from x
+            y_fit[i] = y[i]
     else:
         for j in xrange(left_end, right_end):
             sum_weighted_x += weights[j] * x[j]
@@ -460,7 +473,7 @@ def update_indices(np.ndarray[DTYPE_t, ndim = 1] xvals,
                    np.ndarray[DTYPE_t, ndim = 1] y_fit,
                    double delta,
                    Py_ssize_t i,
-                   Py_ssize_t n,
+                   Py_ssize_t out_n,
                    Py_ssize_t last_fit_i):
     '''
     Update the counters of the local regression.
@@ -477,7 +490,7 @@ def update_indices(np.ndarray[DTYPE_t, ndim = 1] xvals,
         of weighted regression.
     i : indexing integer
         The index of the current point being fit.
-    n : indexing integer
+    out_n : indexing integer
         The length of the input vector xvals.
     last_fit_i : indexing integer
         The last point at which y_fit was calculated.
@@ -510,7 +523,7 @@ def update_indices(np.ndarray[DTYPE_t, ndim = 1] xvals,
     # This loop increments until we fall just outside of delta distance,
     # copying the results for any repeated x's along the way.
     cutpoint = xvals[last_fit_i] + delta
-    for k in range(last_fit_i + 1, n):
+    for k in range(last_fit_i + 1, out_n):
         if xvals[k] > cutpoint:
             break
         if xvals[k] == xvals[last_fit_i]:

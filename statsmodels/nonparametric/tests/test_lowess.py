@@ -154,7 +154,8 @@ class TestLowess(object):
         assert_almost_equal(yhat, actual_lowess2[:,1], decimal=13)
 
         # Test specifying xvals explicitly, now with nans
-        actual_lowess4 = lowess(y, x, xvals = x[perm_idx], return_sorted=False)
+        perm_idx = np.arange(actual_lowess.shape[0])
+        actual_lowess4 = lowess(y, x, xvals = actual_lowess[perm_idx,0], return_sorted=False)
         assert_almost_equal(actual_lowess[perm_idx,1], actual_lowess4, decimal=13)
 
 
